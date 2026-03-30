@@ -1,0 +1,10 @@
+{
+  "name": "avalarin-claude",
+  "description": "Reusable skills, agents, and hooks for structured development workflow: feature dev, test dev, code review, PR creation, worktree management, and status tracking",
+  "version": "1.0.0",
+  "author": {
+    "name": "avalarin"
+  },
+  "license": "MIT",
+  "keywords": ["development", "workflow", "code-review", "feature-dev", "testing"]
+}
