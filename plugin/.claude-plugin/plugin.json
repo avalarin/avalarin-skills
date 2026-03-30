@@ -13,6 +13,5 @@
     "testing",
     "pull-request",
     "worktree"
-  ],
-  "hooks": "./hooks/hooks.json"
+  ]
 }
