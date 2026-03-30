@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "avalarin-skills",
-      "source": ".",
+      "source": "./plugin",
       "description": "Development workflow: feature dev, code review, testing, plan creation, PR automation, and worktree management"
     }
   ]
