@@ -1,0 +1,13 @@
+{
+  "name": "avalarin",
+  "owner": {
+    "name": "avalarin"
+  },
+  "plugins": [
+    {
+      "name": "avalarin-skills",
+      "source": ".",
+      "description": "Development workflow: feature dev, code review, testing, plan creation, PR automation, and worktree management"
+    }
+  ]
+}
