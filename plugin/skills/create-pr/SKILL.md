@@ -1,199 +1,157 @@
 ---
 name: create-pr
-description: Push current branch and create a GitHub pull request. Checks for uncommitted changes, pushes to origin, monitors CI (GitHub Actions), and auto-fixes failures with user approval. Use this skill whenever the user wants to push code, create a PR, open a pull request, submit changes for review, or says things like "push and create PR", "open a PR", "submit my changes". Also trigger when the user says /create-pr.
+description: Push current branch and create a pull request. Provider-agnostic — works with GitHub, Bitbucket, GitLab, etc. via pluggable provider documents. Use when the user says "push and create PR", "open a PR", "submit my changes", or /create-pr.
 ---
 
 # Create PR
 
-Push the current branch to GitHub and create a pull request, monitoring CI and fixing issues along the way.
+Push the current branch and create a pull request, monitoring CI and fixing issues along the way.
 
-## Prerequisites
-
-This skill requires the `gh` CLI (GitHub CLI). If it's not installed, tell the user to install it:
-```
-brew install gh
-gh auth login
-```
+This skill is provider-agnostic. Provider-specific instructions (how to create PRs, monitor CI, etc.) are loaded from a separate provider document.
 
 ## Workflow
 
+### Step 0: Load Provider
+
+Find and read the provider document. Check these locations in order, use the **first one found**:
+
+1. `.claude/create-pr-provider.md` in the project root
+2. `~/.claude/create-pr-provider.md` (user-level default)
+3. Auto-detect by git remote domain:
+   - Run `git remote get-url origin` and extract the hostname (e.g., `github.com`, `stash.msk.avito.ru`, `gitlab.example.com`)
+   - Check if `~/.claude/create-pr-providers/<hostname>.md` exists
+4. `<skill-path>/references/github.md` (built-in fallback)
+
+Read the provider document. It contains 5 sections you will reference throughout this workflow:
+- **Commit & Branch Rules** — branch/commit validation, base branch name, commit format
+- **Create or Find PR** — how to check/create PRs
+- **Monitor CI** — how to track CI status
+- **Get CI Logs** — how to retrieve failure logs
+- **Summary Format** — how to present results
+
+Extract the `base-branch` value from the provider (e.g., `main` or `master`). You will use it in multiple steps below.
+
+Tell the user which provider was loaded.
+
 ### Step 1: Pre-flight checks
 
-Run these checks before doing anything:
-
-1. **Verify `gh` is available** — run `which gh`. If missing, stop and tell the user to install it.
-2. **Check for uncommitted changes** — run `git status --porcelain`. If there are uncommitted or untracked files, commit them automatically:
-   - Stage all modified and untracked files with `git add <specific-files>` (avoid `git add -A` to prevent accidentally staging sensitive files like `.env`)
-   - Analyze the changes and create a descriptive commit message
-   - Commit using the same format as the rest of the repo
+1. **Check for uncommitted changes** — run `git status --porcelain`. If there are uncommitted or untracked files, commit them automatically:
+   - Stage files with `git add <specific-files>` (avoid `git add -A` to prevent accidentally staging sensitive files like `.env`)
+   - Use the commit message format from the provider's **Commit & Branch Rules**
    - If staging/committing fails, stop and tell the user what's pending.
-3. **Get current branch** — run `git branch --show-current`. Note whether you're on `main` or a feature branch. If on `main`, you will skip merge conflict check and PR creation (Steps 5-6) but you MUST still run Steps 2-4 (push, monitor CI, handle failures).
 
-### Step 2: Push to origin
+2. **Get current branch** — run `git branch --show-current`.
+
+3. **Validate branch and commits** — follow the provider's **Commit & Branch Rules** section. Run any validation checks it specifies (branch naming, commit message format, etc.). If validation fails, stop with the error message described by the provider.
+
+4. **Run any provider prerequisites** — if the provider specifies prerequisite checks (e.g., CLI tools that must be available), run them now. Stop if prerequisites are not met.
+
+### Step 2: Code Review
+
+Before pushing, run a code review on all changes that will go into the PR.
+
+1. Determine the git range using the base branch from the provider:
+   ```bash
+   BASE_SHA=$(git merge-base <base-branch> HEAD)
+   HEAD_SHA=$(git rev-parse HEAD)
+   ```
+
+2. If there are commits beyond the base branch (`git log --oneline $BASE_SHA..$HEAD_SHA` is non-empty), dispatch the **code-reviewer** subagent with the range.
+
+3. Handle review results:
+   - **Critical issues**: Fix before pushing. Commit fixes (using provider's commit format), then re-run the review.
+   - **Warnings**: Present to the user via AskUserQuestion — "The reviewer found these warnings. Fix before pushing, or proceed?"
+   - **Suggestions**: Note them in the summary but don't block.
+
+4. If on the base branch (no divergence), skip this step.
+
+### Step 3: Push to origin
 
 ```bash
 git push -u origin HEAD
 ```
 
-If push fails (e.g., no upstream, rejected), diagnose and report to the user.
+If push fails (e.g., no upstream, rejected), diagnose and report to the user. Never force-push.
 
-### Step 3: Monitor CI
+### Step 4: Check for merge conflicts
 
-After pushing, check if there are GitHub Actions workflows running for this branch.
-
-**IMPORTANT**: CI runs take a few seconds to appear after a push. You MUST wait and retry before concluding there are no runs. Use the following approach:
+If on the base branch, skip this step.
 
 ```bash
-# Wait 5 seconds for GitHub to register the run, then check
-sleep 5 && gh run list --branch $(git branch --show-current) --limit 5 --json databaseId,name,status,conclusion,event,createdAt
+git fetch origin <base-branch>
+git merge --no-commit --no-ff origin/<base-branch>
 ```
 
-If the list is empty, wait another 10 seconds and retry **once more**:
-
-```bash
-sleep 10 && gh run list --branch $(git branch --show-current) --limit 5 --json databaseId,name,status,conclusion,event,createdAt
-```
-
-Only if the list is still empty after the second attempt, you may skip CI monitoring and proceed to Step 5.
-
-Once you see a run, wait for it to complete. Poll with:
-
-```bash
-gh run watch <run-id> --exit-status
-```
-
-Use `--exit-status` so the command exits with non-zero if the run fails. Set a reasonable timeout (10 minutes).
-
-### Step 4: Handle CI failures
-
-If CI fails:
-
-1. **Get failure details**:
-   ```bash
-   gh run view <run-id> --log-failed
-   ```
-
-2. **Ask the user for permission** before fixing anything. Use AskUserQuestion to show them:
-   - Which checks failed
-   - A brief summary of the errors
-   - "Should I try to fix these issues?"
-
-3. If the user agrees, fix the issues:
-   - Analyze the error logs
-   - Make the necessary code changes (keep fixes minimal and focused)
-   - Run local verification if possible (lint, build, test — see CLAUDE.md for commands)
-
-4. **Ask the user for permission to commit and push** using AskUserQuestion:
-   - Show what files changed and a brief description of the fix
-   - "Can I commit and push these fixes?"
-
-5. If approved, commit the fix and push:
-   ```bash
-   git add <specific-files>
-   git commit -m "fix: <description of what was fixed>"
-   git push
-   ```
-
-6. Go back to Step 3 to monitor the new CI run.
-
-If the user declines the fix, stop and report the current state.
-
-### Step 5: Check for merge conflicts
-
-If on `main`, skip this step and go to Step 6.
-
-Check if the branch has merge conflicts with the base branch (`main`):
-
-```bash
-git fetch origin main && git merge-tree $(git merge-base HEAD origin/main) origin/main HEAD
-```
-
-Or attempt a dry-run merge:
-
-```bash
-git fetch origin main
-git merge --no-commit --no-ff origin/main
-```
-
-If there are **no conflicts**, abort the merge and proceed:
-
+If there are **no conflicts**, abort and proceed:
 ```bash
 git merge --abort
 ```
 
 If there **are conflicts**:
 
-1. Abort the test merge:
-   ```bash
-   git merge --abort
-   ```
+1. Abort the test merge: `git merge --abort`
+2. **Ask the user for permission** via AskUserQuestion — show which files conflict.
+3. If approved, use a sub-agent (software-engineer) to resolve conflicts.
+4. **Ask the user for permission to commit and push**. Use the provider's commit format.
+5. If approved, commit and push. Go back to Step 6 (Monitor CI).
+6. If declined, abort the merge and report.
 
-2. **Ask the user for permission** before resolving. Use AskUserQuestion to show them:
-   - Which files have conflicts
-   - A brief summary of the conflicting changes
-   - "Should I try to resolve these merge conflicts?"
+### Step 5: Create Pull Request
 
-3. If the user agrees, use a sub-agent (software-engineer) to resolve the conflicts:
-   - Run `git merge origin/main` to start the real merge
-   - Analyze each conflicted file and resolve appropriately
-   - Run local verification (lint, build, test — see CLAUDE.md for commands)
+If on the base branch, skip — tell the user: "Pushed directly to <base-branch>. No PR created." and go to Step 8.
 
-4. **Ask the user for permission to commit and push** using AskUserQuestion:
-   - Show which files were resolved and how
-   - "Can I commit the merge and push?"
+Follow the provider's **Create or Find PR** section:
+- Check if a PR already exists
+- If not, create one using the provider's instructions
+- Store the PR URL and PR ID for later steps
 
-5. If approved, complete the merge and push:
-   ```bash
-   git add <resolved-files>
-   git commit -m "merge: resolve conflicts with main"
-   git push
-   ```
+### Step 6: Monitor CI
 
-6. Go back to Step 3 to monitor the new CI run.
+Follow the provider's **Monitor CI** section:
+- Use the polling strategy described by the provider
+- Determine the result: passed, failed (with build ID), running, or not found
+- If CI is not found after retries, ask the user whether to wait longer or skip
 
-If the user declines, abort the merge (`git merge --abort`) and report the current state.
+If CI passes, go to Step 8.
+If CI fails, go to Step 7.
 
-### Step 6: Create Pull Request
+### Step 7: Handle CI failures
 
-If on `main`, skip this step — tell the user: "Pushed directly to main. No PR created." and go to Step 7.
+1. **Get failure details** — follow the provider's **Get CI Logs** section to retrieve logs.
 
-Once CI passes (or was skipped), create the PR:
+2. **Ask the user for permission** before fixing. Show them:
+   - Which checks/builds failed
+   - A brief summary of the errors
+   - "Should I try to fix these issues?"
 
-1. Check if a PR already exists for this branch:
-   ```bash
-   gh pr view --json url 2>/dev/null
-   ```
-   If a PR already exists, skip creation and just report the existing PR URL.
+3. If the user agrees:
+   - Analyze the error logs and make minimal code fixes
+   - Run local verification if possible (lint, build, test — see CLAUDE.md for commands)
 
-2. Analyze all commits on this branch (compared to main) to write a good PR title and description:
-   ```bash
-   git log main..HEAD --oneline
-   git diff main...HEAD --stat
-   ```
+4. **Ask the user for permission to commit and push**:
+   - Show what changed and why
+   - Use the provider's commit format
 
-3. Create the PR:
-   ```bash
-   gh pr create --title "<title>" --body "<body>"
-   ```
+5. If approved, commit and push. Go back to Step 6.
 
-   Use a HEREDOC for the body to preserve formatting. Include:
-   - Summary of changes (2-3 bullet points)
-   - Test plan if applicable
+If the user declines, stop and report.
+If CI keeps failing after 3 fix attempts, stop and tell the user.
 
-### Step 7: Summary
+### Step 8: Summary
 
-Present the user with a final summary:
+Follow the provider's **Summary Format** section. Always include:
 
-- **PR link** (clickable)
-- **CI status**: passed / passed after fixes / skipped
-- **Issues fixed** (if any): brief list of what went wrong and how it was resolved
-- **Commits included**: list of commits in the PR
+- **PR link** (if created or found)
+- **CI status**: passed / passed after fixes / skipped / not found
+- **Issues fixed** (if any): brief list
+- **Commits included**: list of commits
 
 Keep the summary concise and scannable.
 
-## Important rules
+## Important Rules
 
 - Never force-push. If a normal push is rejected, ask the user what to do.
-- Always ask for user permission before making any code changes or commits (via AskUserQuestion). The user should stay in control.
+- Always ask for user permission before making any code changes or commits (via AskUserQuestion).
 - If CI keeps failing after 3 fix attempts, stop and tell the user — don't loop forever.
-- When fixing CI issues, follow the project's code standards from CLAUDE.md.
+- When fixing issues, follow the project's code standards from CLAUDE.md.
+- All auto-created commits must follow the format specified by the provider's Commit & Branch Rules.

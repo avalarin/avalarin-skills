@@ -115,4 +115,4 @@ Use AskUserQuestion tool to ask the user for confirmation.
 
 ---
 
-NOTE: Code review is handled automatically via hooks, so there's no need to ping a reviewer separately.
+NOTE: After implementation is complete, use the **code-review** skill to dispatch a code review on the changes.
