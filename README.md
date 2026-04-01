@@ -5,6 +5,7 @@
 ## Установка
 
 ```bash
+claude plugins add-marketplace github:avalarin/avalarin-skills
 claude plugins add avalarin/avalarin-skills
 ```
 
