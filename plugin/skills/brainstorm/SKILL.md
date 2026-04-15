@@ -19,6 +19,13 @@ When people brainstorm alone, they tend to anchor on their first idea and then r
 
 ## How a session works
 
+### Phase 0: Check arguments
+
+Before starting, check `$ARGUMENTS`:
+- If it contains a **save path** (e.g., `save to notes/`, `docs/`, a directory-like token ending in `/`), store it. Skip asking the user for a save location at the end of Phase 3 — use this path directly in Phase 4.
+- If it contains a **topic**, use it as the starting context for Phase 1.
+- If empty, proceed normally.
+
 ### Phase 1: Understand the problem (1-3 questions)
 
 Before you can ask good questions, you need to understand what the user is actually trying to figure out. Don't assume you know from the first sentence — the stated problem is often not the real problem.
@@ -98,7 +105,7 @@ Brief narrative of how the thinking evolved: what was the starting position, wha
 ```
 
 **Important details about saving:**
-- If the user specified a directory (like `document/`), pick a descriptive filename based on the topic (e.g., `document/bidder-latency-vs-offsite.md`). Use kebab-case, keep it short.
+- If the user specified a directory (like `notes/`), pick a descriptive filename based on the topic (e.g., `notes/make-vs-buy-decision.md`). Use kebab-case, keep it short.
 - If a file with that name already exists, don't overwrite — ask or append a version suffix.
 - The document should be in the same language the brainstorm was conducted in.
 - Keep it concise — this is a thinking artifact, not a report. One page max.
